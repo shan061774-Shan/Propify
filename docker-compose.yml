@@ -1,0 +1,28 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: propify-api
+    environment:
+      PROPIFY_DATABASE_URL: ${PROPIFY_DATABASE_URL:-sqlite:////app/rental.db}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./rental.db:/app/rental.db
+      - ./uploads:/app/uploads
+      - ./uploaded_documents:/app/uploaded_documents
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: propify-ui
+    depends_on:
+      - api
+    environment:
+      PROPIFY_API_URL: ${PROPIFY_API_URL:-http://api:8000}
+    ports:
+      - "8501:8501"
+    restart: unless-stopped

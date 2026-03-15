@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
+pydantic
+python-dotenv
+streamlit
+requests
+python-multipart
+twilio
+snowflake-sqlalchemy
+snowflake-connector-python
+PyJWT
