@@ -14,6 +14,7 @@ from rental_core.models import (  # noqa
     lease,
     maintenance,
     owner,
+    owner_admin,
     owner_password_reset,
     owner_contractor_link,
     owner_tenant_link,
@@ -36,6 +37,7 @@ from rental_core.routers import (
     utility_charges,
     contractors,
     network,
+    automation,
     owner as owner_router,
     portal as portal_router,
 )
@@ -54,6 +56,7 @@ app.include_router(documents.router, dependencies=admin_dependencies)
 app.include_router(utility_charges.router, dependencies=admin_dependencies)
 app.include_router(contractors.router, dependencies=admin_dependencies)
 app.include_router(network.router, dependencies=admin_dependencies)
+app.include_router(automation.router, dependencies=admin_dependencies)
 app.include_router(owner_router.router)
 app.include_router(portal_router.router)
 

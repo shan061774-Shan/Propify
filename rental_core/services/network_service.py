@@ -24,11 +24,13 @@ def invite_tenant_by_phone(db: Session, owner_id: int, phone: str):
         .first()
     )
     if link:
-        link.status = "invited"
+        if link.status != "approved":
+            link.status = "invited"
         link.tenant_id = tenant.id if tenant else link.tenant_id
         link.invited_at = datetime.utcnow()
-        link.accepted_at = None
-        link.approved_at = None
+        if link.status != "approved":
+            link.accepted_at = None
+            link.approved_at = None
     else:
         link = OwnerTenantLink(
             owner_id=owner_id,
@@ -55,11 +57,13 @@ def invite_contractor_by_phone(db: Session, owner_id: int, phone: str):
         .first()
     )
     if link:
-        link.status = "invited"
+        if link.status != "approved":
+            link.status = "invited"
         link.contractor_id = contractor.id if contractor else link.contractor_id
         link.invited_at = datetime.utcnow()
-        link.accepted_at = None
-        link.approved_at = None
+        if link.status != "approved":
+            link.accepted_at = None
+            link.approved_at = None
     else:
         link = OwnerContractorLink(
             owner_id=owner_id,

@@ -21,4 +21,4 @@ def get_db():
         db.close()
 
 # import all models so Base knows about them
-from rental_core.models import property, unit, tenant, lease, payment, maintenance, document, utility_charge, contractor, owner  # noqa
+from rental_core.models import property, unit, tenant, lease, payment, maintenance, document, utility_charge, contractor, owner, owner_admin  # noqa

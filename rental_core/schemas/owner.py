@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -47,7 +49,34 @@ class OwnerRead(OwnerBase):
 class OwnerLoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    actor_type: str = "owner"
+    actor_name: str | None = None
     owner: OwnerRead
+
+
+class OwnerAdminInviteRequest(BaseModel):
+    phone: str
+
+
+class OwnerAdminAcceptInviteRequest(BaseModel):
+    phone: str
+    name: str
+    email: str | None = ""
+    password: str
+
+
+class OwnerAdminRead(BaseModel):
+    id: int
+    owner_id: int
+    phone: str
+    name: str | None = ""
+    email: str | None = ""
+    status: str
+    invited_at: datetime
+    accepted_at: datetime | None = None
+    approved_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OwnerPasswordResetRequest(BaseModel):
@@ -96,3 +125,19 @@ class OwnerRegisterPhoneRequest(BaseModel):
 
 class OwnerRegisterPhoneResponse(BaseModel):
     message: str
+
+
+class OwnerOpsLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class OwnerOpsLoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+
+
+class OwnerTwilioStatusResponse(BaseModel):
+    configured: bool
+    sender_mode: str

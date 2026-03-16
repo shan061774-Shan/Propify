@@ -13,11 +13,97 @@ def contractor_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _owner_logged_in() -> bool:
+    return bool(st.session_state.get("owner_authenticated") and st.session_state.get("owner_access_token"))
+
+
+def _phone_has_space(phone: str) -> bool:
+    return any(ch.isspace() for ch in phone)
+
+
 if "contractor_portal_token" not in st.session_state:
     st.session_state.contractor_portal_token = None
 
 if "contractor_portal_profile" not in st.session_state:
     st.session_state.contractor_portal_profile = None
+
+if _owner_logged_in():
+    with st.expander("🛠️ Owner Tools: Manage Contractors", expanded=False):
+        twilio_status_response = api_get(f"{API_URL}/owner/twilio-status")
+        twilio_configured = False
+        if twilio_status_response.ok:
+            twilio_configured = bool(twilio_status_response.json().get("configured"))
+        if not twilio_configured:
+            st.warning("Twilio not configured, SMS not sent.")
+
+        contractors_r = api_get(f"{API_URL}/contractors/")
+        contractors = contractors_r.json() if contractors_r.ok else []
+
+        st.markdown("**All Contractors**")
+        if contractors:
+            for contractor in contractors:
+                st.write(
+                    f"#{contractor['id']} | {contractor.get('name') or '-'} | "
+                    f"{contractor.get('phone') or 'N/A'} | "
+                    f"{contractor.get('specialty') or 'General'}"
+                )
+        else:
+            st.caption("No contractors found.")
+
+        st.divider()
+        st.markdown("**Add Contractor + Send Invite**")
+        oc1, oc2, oc3 = st.columns(3)
+        owner_contractor_name = oc1.text_input("Name", key="owner-contractor-add-name")
+        owner_contractor_phone = oc2.text_input("Phone", key="owner-contractor-add-phone")
+        owner_contractor_email = oc3.text_input("Email", key="owner-contractor-add-email")
+        oc4, oc5 = st.columns(2)
+        owner_contractor_specialty = oc4.text_input("Specialty", key="owner-contractor-add-specialty")
+        owner_contractor_notes = oc5.text_input("Notes", key="owner-contractor-add-notes")
+
+        if st.button("Add Contractor And Invite", key="owner-contractor-add-invite", use_container_width=True):
+            phone = owner_contractor_phone.strip()
+            if not owner_contractor_name.strip():
+                st.warning("Name is required.")
+            elif not phone:
+                st.warning("Phone is required.")
+            elif _phone_has_space(phone):
+                st.warning("Phone cannot contain spaces.")
+            else:
+                create_r = api_post(
+                    f"{API_URL}/contractors/",
+                    json={
+                        "name": owner_contractor_name.strip(),
+                        "phone": phone,
+                        "email": owner_contractor_email.strip(),
+                        "specialty": owner_contractor_specialty.strip(),
+                        "notes": owner_contractor_notes.strip(),
+                    },
+                )
+                if create_r.status_code not in (200, 201):
+                    st.error(f"Create failed: {create_r.status_code} {create_r.text}")
+                else:
+                    invite_r = api_post(f"{API_URL}/network/contractors/invite", json={"phone": phone})
+                    if invite_r.ok:
+                        st.success("Contractor added and invite sent.")
+                    else:
+                        st.warning(f"Contractor added, but invite failed: {invite_r.status_code} {invite_r.text}")
+                    st.rerun()
+
+        st.markdown("**Invite Existing Contractor By Phone**")
+        invite_phone = st.text_input("Phone Number", key="owner-contractor-invite-phone")
+        if st.button("Send Invite", key="owner-contractor-invite-btn"):
+            phone = invite_phone.strip()
+            if not phone:
+                st.warning("Phone is required.")
+            elif _phone_has_space(phone):
+                st.warning("Phone cannot contain spaces.")
+            else:
+                invite_r = api_post(f"{API_URL}/network/contractors/invite", json={"phone": phone})
+                if invite_r.ok:
+                    st.success("Invite sent.")
+                    st.rerun()
+                else:
+                    st.error(f"Invite failed: {invite_r.status_code} {invite_r.text}")
 
 if not st.session_state.contractor_portal_token:
     login_tab, accept_tab = st.tabs(["Login", "Accept Invite"])

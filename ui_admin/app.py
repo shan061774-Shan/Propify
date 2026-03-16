@@ -1,6 +1,6 @@
 import streamlit as st
 from ui_admin.api_client import api_get, api_patch, api_post
-from ui_admin.config import API_URL
+from ui_admin.config import API_URL, DONATION_HANDLE, DONATION_LINK, DONATION_METHOD
 
 st.set_page_config(page_title="Propify", page_icon="🏢", layout="wide")
 
@@ -22,7 +22,10 @@ def _reset_owner_session_state() -> None:
         "owner_authenticated",
         "owner_profile",
         "owner_access_token",
+        "owner_actor_name",
+        "owner_actor_type",
         "force_owner_login",
+        "force_owner_setup",
         "tenant_portal_token",
         "tenant_portal_profile",
         "tenant_lookup_invites",
@@ -48,7 +51,10 @@ def _reset_owner_session_state() -> None:
     st.session_state["owner_authenticated"] = False
     st.session_state["owner_access_token"] = None
     st.session_state["owner_profile"] = None
+    st.session_state["owner_actor_name"] = None
+    st.session_state["owner_actor_type"] = None
     st.session_state["force_owner_login"] = True
+    st.session_state["force_owner_setup"] = True
     st.session_state["owner_session_refreshed"] = True
 
     # Defensive cache clear in case stale profile calls are cached in future changes.
@@ -69,11 +75,45 @@ def _auth_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _propify_ops_headers() -> dict[str, str]:
+    token = st.session_state.get("propify-ops-token")
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _render_branding(width: int = 340) -> None:
     b1, b2, b3 = st.columns([1, 2, 1])
     with b2:
         st.image("ui_admin/static/propify_logo.svg", width=width)
         st.caption("Operations platform for property owners")
+
+
+def _render_donation_support() -> None:
+    method = (DONATION_METHOD or "PayPal").strip()
+    link = (DONATION_LINK or "").strip()
+    handle = (DONATION_HANDLE or "").strip()
+
+    st.markdown("### Support Propify")
+    st.caption("Propify is free to download and use. Optional donations help support development.")
+    st.info(f"Donation method: {method}")
+
+    if link:
+        st.markdown(f"[Donate with {method}]({link})")
+    elif handle:
+        st.code(handle)
+        st.caption(f"Pay using this {method} handle.")
+    else:
+        st.caption("Set DONATION_LINK or DONATION_HANDLE in environment or Streamlit secrets to enable direct payments.")
+
+
+def _render_donation_inline() -> None:
+    link = (DONATION_LINK or "").strip()
+
+    if link:
+        st.link_button("Donate Propify", link)
+    else:
+        st.button("Donate Propify", key="donate-propify-placeholder", disabled=True)
 
 
 def _safe_get(url: str, **kwargs):
@@ -113,6 +153,129 @@ def _build_phone(country_label: str, local_number: str) -> str:
     return f"{country_code}{local}"
 
 
+def _init_propify_ops_state() -> None:
+    if "propify-ops-authenticated" not in st.session_state:
+        st.session_state["propify-ops-authenticated"] = False
+    if "propify-ops-user" not in st.session_state:
+        st.session_state["propify-ops-user"] = ""
+    if "propify-ops-token" not in st.session_state:
+        st.session_state["propify-ops-token"] = None
+    if "propify-ops-open" not in st.session_state:
+        st.session_state["propify-ops-open"] = False
+
+
+def _render_propify_panel() -> None:
+    _init_propify_ops_state()
+    c1, c2, c3 = st.columns([3, 1, 3])
+    with c2:
+        if st.button("Propify", key="propify-ops-toggle", use_container_width=True):
+            st.session_state["propify-ops-open"] = not st.session_state.get("propify-ops-open", False)
+    with c3:
+        _render_donation_inline()
+
+    if not st.session_state.get("propify-ops-open"):
+        return
+
+    if not st.session_state.get("propify-ops-authenticated"):
+        pa1, pa2 = st.columns(2)
+        propify_user = pa1.text_input("User ID", key="propify-ops-userid")
+        propify_password = pa2.text_input("Password", type="password", key="propify-ops-password")
+
+        if st.button("Sign In", key="propify-ops-signin"):
+            login_r = _safe_post(
+                f"{API_URL}/owner/ops/login",
+                json={"username": propify_user.strip(), "password": propify_password},
+            )
+            if login_r is None:
+                st.error(f"Sign-in failed: API is unreachable at {API_URL}")
+            elif login_r.ok:
+                payload = login_r.json()
+                st.session_state["propify-ops-authenticated"] = True
+                st.session_state["propify-ops-user"] = payload.get("username") or propify_user.strip()
+                st.session_state["propify-ops-token"] = payload.get("access_token")
+                st.success("Signed in.")
+                st.rerun()
+            else:
+                st.error("Invalid credentials.")
+    else:
+        ps1, ps2 = st.columns([4, 1])
+        ps1.success(f"Signed in as {st.session_state.get('propify-ops-user')}")
+        if ps2.button("Sign Out", key="propify-ops-signout", use_container_width=True):
+            st.session_state["propify-ops-authenticated"] = False
+            st.session_state["propify-ops-user"] = ""
+            st.session_state["propify-ops-token"] = None
+            st.rerun()
+
+        pb1, pb2 = st.columns(2)
+        phone_for_ops = pb1.text_input("Phone Number", key="propify-ops-phone")
+        reason_for_ops = pb2.text_input("Reason", value="Compliance hold", key="propify-ops-reason")
+
+        pc1, pc2, pc3 = st.columns(3)
+        if pc1.button("Check", key="propify-ops-check", use_container_width=True):
+            if not phone_for_ops.strip():
+                st.error("Phone number is required.")
+            elif _phone_has_space(phone_for_ops):
+                st.error("Phone number cannot contain spaces.")
+            else:
+                status_r = _safe_post(
+                    f"{API_URL}/owner/ops/status-by-phone",
+                    headers=_propify_ops_headers(),
+                    json={"phone": phone_for_ops.strip()},
+                )
+                if status_r is None:
+                    st.error(f"Check failed: API is unreachable at {API_URL}")
+                elif status_r.ok:
+                    data = status_r.json()
+                    if not data.get("found"):
+                        st.warning(f"No owner found for {phone_for_ops.strip()}.")
+                    else:
+                        if bool(data.get("is_blocked")):
+                            st.error("Status: BLOCKED")
+                        else:
+                            st.success("Status: ACTIVE")
+                        st.caption(
+                            f"Phone: {data.get('phone')} | Username: {data.get('username') or '-'} | Reason: {data.get('blocked_reason') or '-'}"
+                        )
+                else:
+                    st.error(f"Check failed: {status_r.status_code} {status_r.text}")
+
+        if pc2.button("Block", key="propify-ops-block", type="primary", use_container_width=True):
+            if not phone_for_ops.strip():
+                st.error("Phone number is required.")
+            elif _phone_has_space(phone_for_ops):
+                st.error("Phone number cannot contain spaces.")
+            else:
+                block_r = _safe_post(
+                    f"{API_URL}/owner/ops/block-by-phone",
+                    headers=_propify_ops_headers(),
+                    json={"phone": phone_for_ops.strip(), "reason": reason_for_ops.strip() or None},
+                )
+                if block_r is None:
+                    st.error(f"Block failed: API is unreachable at {API_URL}")
+                elif block_r.ok:
+                    st.success("Number blocked.")
+                else:
+                    st.error(f"Block failed: {block_r.status_code} {block_r.text}")
+
+        if pc3.button("Unblock", key="propify-ops-unblock", use_container_width=True):
+            if not phone_for_ops.strip():
+                st.error("Phone number is required.")
+            elif _phone_has_space(phone_for_ops):
+                st.error("Phone number cannot contain spaces.")
+            else:
+                unblock_r = _safe_post(
+                    f"{API_URL}/owner/ops/unblock-by-phone",
+                    headers=_propify_ops_headers(),
+                    json={"phone": phone_for_ops.strip()},
+                )
+                if unblock_r is None:
+                    st.error(f"Unblock failed: API is unreachable at {API_URL}")
+                elif unblock_r.ok:
+                    st.success("Number unblocked.")
+                else:
+                    st.error(f"Unblock failed: {unblock_r.status_code} {unblock_r.text}")
+
+
 def fetch_owner_status():
     r = _safe_get(f"{API_URL}/owner/status")
     if r is None:
@@ -138,6 +301,10 @@ if "owner_profile" not in st.session_state:
     st.session_state.owner_profile = None
 if "owner_access_token" not in st.session_state:
     st.session_state.owner_access_token = None
+if "owner_actor_name" not in st.session_state:
+    st.session_state.owner_actor_name = None
+if "owner_actor_type" not in st.session_state:
+    st.session_state.owner_actor_type = None
 if "show_owner_phone_setup" not in st.session_state:
     st.session_state.show_owner_phone_setup = False
 
@@ -145,14 +312,17 @@ if st.session_state.get("force_owner_login"):
     st.session_state.owner_authenticated = False
     st.session_state.owner_access_token = None
     st.session_state.owner_profile = None
+    st.session_state.owner_actor_name = None
+    st.session_state.owner_actor_type = None
     st.session_state.pop("force_owner_login", None)
 
 if st.session_state.pop("owner_session_refreshed", False):
-    st.success("Owner session refreshed. Please log in again.")
+    st.success("Owner session refreshed. Complete Owner Account Setup or switch back to login.")
 
 owner_status = fetch_owner_status()
 is_setup = bool(owner_status.get("is_setup"))
 api_error = bool(owner_status.get("api_error"))
+force_owner_setup = bool(st.session_state.get("force_owner_setup"))
 
 if api_error:
     st.warning(
@@ -167,12 +337,17 @@ if st.session_state.owner_authenticated and st.session_state.owner_access_token:
         st.session_state.owner_authenticated = False
         st.session_state.owner_access_token = None
         st.session_state.owner_profile = None
+        st.session_state.owner_actor_name = None
+        st.session_state.owner_actor_type = None
 
-if not is_setup:
+if (not is_setup) or force_owner_setup:
     _render_branding(width=320)
-    st.markdown("## Propify")
     st.subheader("Owner Account Setup")
     st.caption("Create your property owner login and company profile.")
+
+    if force_owner_setup and st.button("Back To Owner Login", key="owner-setup-back-to-login"):
+        st.session_state.pop("force_owner_setup", None)
+        st.rerun()
 
     c1, c2 = st.columns(2)
     setup_country_label = c1.selectbox(
@@ -183,7 +358,6 @@ if not is_setup:
     setup_owner_phone_local = c2.text_input(
         "Login Phone Number",
         key="setup-owner-phone-local",
-        placeholder="e.g. 6146238948",
     )
     password = st.text_input("Password", type="password", key="setup-password")
 
@@ -221,20 +395,21 @@ if not is_setup:
             if setup_r is None:
                 st.error(f"Setup failed: API is unreachable at {API_URL}")
             elif setup_r.status_code in (200, 201):
+                st.session_state.pop("force_owner_setup", None)
                 st.success("Owner account created. Please log in below.")
                 st.rerun()
             else:
                 st.error(f"Setup failed: {setup_r.status_code} {setup_r.text}")
 
+    _render_propify_panel()
     st.stop()
 
 if not st.session_state.owner_authenticated:
     _render_branding(width=320)
-    st.markdown("## Propify")
     st.subheader("Owner Login")
     p1, p2, p3 = st.columns([1.5, 2, 2])
     login_country_label = p1.selectbox("Country", COUNTRY_PHONE_LABELS, key="login-phone-country")
-    login_phone_local = p2.text_input("Phone Number", key="login-phone-local", placeholder="e.g. 6146238948")
+    login_phone_local = p2.text_input("Phone Number", key="login-phone-local")
     login_password_phone = p3.text_input("Password", type="password", key="login-password-phone")
     st.caption("Phone login only. Select country code and enter digits without spaces.")
     if st.button("Login With Phone", type="primary"):
@@ -258,6 +433,8 @@ if not st.session_state.owner_authenticated:
                 st.session_state.owner_authenticated = True
                 st.session_state.owner_access_token = login_payload.get("access_token")
                 st.session_state.owner_profile = login_payload.get("owner")
+                st.session_state.owner_actor_name = login_payload.get("actor_name")
+                st.session_state.owner_actor_type = login_payload.get("actor_type")
                 st.session_state.show_owner_phone_setup = False
                 st.rerun()
             else:
@@ -268,7 +445,7 @@ if not st.session_state.owner_authenticated:
         with st.expander("Phone not registered? Set owner login phone", expanded=True):
             s1, s2, s3 = st.columns([1.5, 2, 2])
             setup_country = s1.selectbox("Country", COUNTRY_PHONE_LABELS, key="register-owner-phone-country")
-            setup_local_phone = s2.text_input("Phone Number", key="register-owner-phone-local", placeholder="e.g. 6146238948")
+            setup_local_phone = s2.text_input("Phone Number", key="register-owner-phone-local")
             setup_owner_password = s3.text_input("Owner Password", type="password", key="register-owner-phone-password")
             st.caption("Use your current owner password to register/update login phone.")
 
@@ -297,7 +474,7 @@ if not st.session_state.owner_authenticated:
 
         r1, r2 = st.columns([1.5, 2])
         reset_country_label = r1.selectbox("Country", COUNTRY_PHONE_LABELS, key="owner-reset-country")
-        reset_phone_local = r2.text_input("Phone Number", key="owner-reset-phone-local", placeholder="e.g. 6146238948")
+        reset_phone_local = r2.text_input("Phone Number", key="owner-reset-phone-local")
         st.caption("Use the same phone as login. No spaces, digits only.")
 
         if st.button("Send Reset Link", key="owner-send-reset-link"):
@@ -346,11 +523,13 @@ if not st.session_state.owner_authenticated:
                 st.session_state.pop("owner_reset_token_preview", None)
             else:
                 st.error("Invalid/expired token or weak password (min 8 characters).")
+    _render_propify_panel()
     st.stop()
 
 current_owner = st.session_state.owner_profile or {}
 company_name = (current_owner.get("company_name") or "Propify").strip()
-owner_name = (current_owner.get("owner_name") or current_owner.get("username") or "Owner").strip()
+owner_name = (st.session_state.get("owner_actor_name") or current_owner.get("owner_name") or current_owner.get("username") or "Owner").strip()
+owner_actor_type = (st.session_state.get("owner_actor_type") or "owner").strip()
 
 hero_left, hero_center, hero_right = st.columns([1, 2, 1])
 with hero_center:
@@ -358,11 +537,13 @@ with hero_center:
     st.caption("Operations platform for property owners")
 
 top_c1, top_c2 = st.columns([5, 1])
-top_c1.success(f"Logged in as {owner_name}")
+top_c1.success(f"Logged in as {owner_name} ({'Primary Owner' if owner_actor_type == 'owner' else 'Company Admin'})")
 if top_c2.button("Logout"):
     st.session_state.owner_authenticated = False
     st.session_state.owner_access_token = None
     st.session_state.owner_profile = None
+    st.session_state.owner_actor_name = None
+    st.session_state.owner_actor_type = None
     st.rerun()
 
 st.subheader("Company Information")
@@ -410,3 +591,4 @@ with st.expander("Edit Company / Owner Info", expanded=False):
             st.error(f"Update failed: {update_r.status_code} {update_r.text}")
 
 st.write("Use the sidebar to navigate between sections.")
+_render_donation_inline()

@@ -4,6 +4,9 @@ import streamlit as st
 
 
 DEFAULT_API_URL = "http://127.0.0.1:8000"
+DEFAULT_DONATION_METHOD = "PayPal"
+DEFAULT_DONATION_LINK = "https://paypal.me/propifyai"
+DEFAULT_DONATION_HANDLE = ""
 
 env_api_url = os.getenv("PROPIFY_API_URL")
 if env_api_url:
@@ -13,3 +16,15 @@ else:
 		API_URL = st.secrets.get("API_URL", DEFAULT_API_URL)
 	except Exception:
 		API_URL = DEFAULT_API_URL
+
+
+DONATION_METHOD = os.getenv("PROPIFY_DONATION_METHOD", DEFAULT_DONATION_METHOD)
+DONATION_LINK = os.getenv("PROPIFY_DONATION_LINK", DEFAULT_DONATION_LINK)
+DONATION_HANDLE = os.getenv("PROPIFY_DONATION_HANDLE", DEFAULT_DONATION_HANDLE)
+
+try:
+	DONATION_METHOD = st.secrets.get("DONATION_METHOD", DONATION_METHOD)
+	DONATION_LINK = st.secrets.get("DONATION_LINK", DONATION_LINK)
+	DONATION_HANDLE = st.secrets.get("DONATION_HANDLE", DONATION_HANDLE)
+except Exception:
+	pass

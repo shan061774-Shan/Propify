@@ -23,10 +23,16 @@ router = APIRouter(prefix="/network", tags=["network"])
 
 def _send_invite_sms(phone: str, message: str) -> None:
     try:
-        from infra.send_rent_due_sms import get_twilio_client
+        from infra.send_rent_due_sms import get_twilio_client, send_sms_message
 
-        client, from_number = get_twilio_client()
-        client.messages.create(body=message, from_=from_number, to=phone)
+        client, from_number, messaging_service_sid = get_twilio_client()
+        send_sms_message(
+            client,
+            phone,
+            message,
+            from_number=from_number,
+            messaging_service_sid=messaging_service_sid,
+        )
     except Exception:
         # Notification delivery is best-effort and should not block invite workflows.
         return

@@ -13,11 +13,91 @@ def tenant_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _owner_logged_in() -> bool:
+    return bool(st.session_state.get("owner_authenticated") and st.session_state.get("owner_access_token"))
+
+
+def _phone_has_space(phone: str) -> bool:
+    return any(ch.isspace() for ch in phone)
+
+
 if "tenant_portal_token" not in st.session_state:
     st.session_state.tenant_portal_token = None
 
 if "tenant_portal_profile" not in st.session_state:
     st.session_state.tenant_portal_profile = None
+
+if _owner_logged_in():
+    with st.expander("🛠️ Owner Tools: Manage Tenants", expanded=False):
+        twilio_status_response = api_get(f"{API_URL}/owner/twilio-status")
+        twilio_configured = False
+        if twilio_status_response.ok:
+            twilio_configured = bool(twilio_status_response.json().get("configured"))
+        if not twilio_configured:
+            st.warning("Twilio not configured, SMS not sent.")
+
+        tenants_r = api_get(f"{API_URL}/tenants/")
+        tenants = tenants_r.json() if tenants_r.ok else []
+
+        st.markdown("**All Tenants**")
+        if tenants:
+            for tenant in tenants:
+                st.write(
+                    f"#{tenant['id']} | {tenant.get('name') or '-'} | "
+                    f"{tenant.get('phone') or 'N/A'} | {tenant.get('email') or 'N/A'}"
+                )
+        else:
+            st.caption("No tenants found.")
+
+        st.divider()
+        st.markdown("**Add Tenant + Send Invite**")
+        ot1, ot2, ot3 = st.columns(3)
+        owner_tenant_name = ot1.text_input("Name", key="owner-tenant-add-name")
+        owner_tenant_email = ot2.text_input("Email", key="owner-tenant-add-email")
+        owner_tenant_phone = ot3.text_input("Phone", key="owner-tenant-add-phone")
+
+        if st.button("Add Tenant And Invite", key="owner-tenant-add-invite", use_container_width=True):
+            phone = owner_tenant_phone.strip()
+            if not owner_tenant_name.strip():
+                st.warning("Name is required.")
+            elif not phone:
+                st.warning("Phone is required.")
+            elif _phone_has_space(phone):
+                st.warning("Phone cannot contain spaces.")
+            else:
+                create_r = api_post(
+                    f"{API_URL}/tenants/",
+                    json={
+                        "name": owner_tenant_name.strip(),
+                        "email": owner_tenant_email.strip(),
+                        "phone": phone,
+                    },
+                )
+                if create_r.status_code not in (200, 201):
+                    st.error(f"Create failed: {create_r.status_code} {create_r.text}")
+                else:
+                    invite_r = api_post(f"{API_URL}/network/tenants/invite", json={"phone": phone})
+                    if invite_r.ok:
+                        st.success("Tenant added and invite sent.")
+                    else:
+                        st.warning(f"Tenant added, but invite failed: {invite_r.status_code} {invite_r.text}")
+                    st.rerun()
+
+        st.markdown("**Invite Existing Tenant By Phone**")
+        invite_phone = st.text_input("Phone Number", key="owner-tenant-invite-phone")
+        if st.button("Send Invite", key="owner-tenant-invite-btn"):
+            phone = invite_phone.strip()
+            if not phone:
+                st.warning("Phone is required.")
+            elif _phone_has_space(phone):
+                st.warning("Phone cannot contain spaces.")
+            else:
+                invite_r = api_post(f"{API_URL}/network/tenants/invite", json={"phone": phone})
+                if invite_r.ok:
+                    st.success("Invite sent.")
+                    st.rerun()
+                else:
+                    st.error(f"Invite failed: {invite_r.status_code} {invite_r.text}")
 
 if not st.session_state.tenant_portal_token:
     login_tab, accept_tab = st.tabs(["Login", "Accept Invite"])

@@ -25,4 +25,5 @@ class OwnerAccount(Base):
     blocked_reason = Column(String, nullable=True, default="")
 
     properties = relationship("Property", back_populates="owner")
+    admins = relationship("OwnerAdmin", back_populates="owner", cascade="all, delete-orphan")
     password_resets = relationship("OwnerPasswordReset", back_populates="owner", cascade="all, delete-orphan")

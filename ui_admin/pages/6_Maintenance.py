@@ -11,36 +11,6 @@ require_owner_login()
 render_company_context()
 
 
-def _owner_context() -> tuple[str, str]:
-    profile = st.session_state.get("owner_profile")
-    if not profile:
-        profile_resp = api_get(f"{API_URL}/owner/profile")
-        if profile_resp.ok:
-            profile = profile_resp.json()
-            st.session_state.owner_profile = profile
-
-    profile = profile or {}
-    owner_name = (profile.get("owner_name") or "Owner").strip()
-    company_name = (profile.get("company_name") or "Propify Property Management").strip()
-    return owner_name, company_name
-
-
-def _status_badge(status: str) -> str:
-    normalized = (status or "").lower()
-    if normalized == "approved":
-        return "<span style='background:#dcfce7;color:#166534;padding:3px 8px;border-radius:999px;font-weight:600;'>APPROVED</span>"
-    if normalized == "accepted":
-        return "<span style='background:#dbeafe;color:#1d4ed8;padding:3px 8px;border-radius:999px;font-weight:600;'>ACCEPTED</span>"
-    return "<span style='background:#fef3c7;color:#92400e;padding:3px 8px;border-radius:999px;font-weight:600;'>INVITED</span>"
-
-
-def _portal_base_url() -> str:
-    try:
-        return st.secrets.get("PORTAL_BASE_URL", "http://127.0.0.1:8501")
-    except Exception:
-        return "http://127.0.0.1:8501"
-
-
 def get_json(path: str, required: bool = False):
     response = api_get(f"{API_URL}{path}")
     if response.ok:
@@ -101,145 +71,34 @@ def media_preview(photo_path: str | None, width: int = 260):
         st.video(media_url)
 
 
-with st.expander("👷 Contractors", expanded=False):
-    st.markdown("**Network Invitations**")
-    contractor_portal_link = f"{_portal_base_url().rstrip('/')}/Contractor_Portal"
-    owner_name, company_name = _owner_context()
-    st.markdown("**Contractor Portal Link**")
-    st.code(contractor_portal_link)
-    st.caption("Use the copy icon on the code block, then share this link with contractors.")
-
-    inv1, inv2 = st.columns([3, 1])
-    contractor_invite_phone = inv1.text_input("Invite contractor by phone", placeholder="e.g. +16145550099")
-    contractor_phone_for_message = contractor_invite_phone.strip() or "<contractor phone>"
-    contractor_message = (
-        f"Hello, this is {owner_name} from {company_name}.\n\n"
-        "You are invited to join the Propify Contractor Portal for maintenance assignments.\n\n"
-        f"Portal: {contractor_portal_link}\n"
-        f"Phone to use: {contractor_phone_for_message}\n\n"
-        "Steps:\n"
-        "1) Open the portal link\n"
-        "2) Click Accept Invite\n"
-        "3) Enter the same phone number and complete profile details\n"
-        "4) After approval, login with that phone number\n"
-    )
-    st.markdown("**Copy Invite Message**")
-    st.code(contractor_message)
-    st.caption("Use the copy icon on the message block to copy in one click.")
-
-    if inv2.button("Send Invite", key="contractor-network-invite-btn", use_container_width=True):
-        invite_resp = api_post(f"{API_URL}/network/contractors/invite", json={"phone": contractor_invite_phone.strip()})
-        if invite_resp.ok:
-            st.success("Contractor invitation sent.")
-            st.rerun()
+with st.expander("📚 Directory", expanded=False):
+    d1, d2 = st.columns(2)
+    with d1:
+        st.markdown("**All Tenants**")
+        if tenants:
+            for tenant in tenants:
+                st.write(
+                    f"#{tenant['id']} | {tenant.get('name') or '-'} | "
+                    f"{tenant.get('phone') or 'N/A'}"
+                )
         else:
-            st.error(f"Invite failed: {invite_resp.status_code} {invite_resp.text}")
+            st.caption("No tenants found.")
 
-    contractor_network_resp = api_get(f"{API_URL}/network/contractors")
-    contractor_links = contractor_network_resp.json() if contractor_network_resp.ok else []
-    if contractor_links:
-        status_counts: dict[str, int] = {}
-        for item in contractor_links:
-            status_key = str(item.get("status", "invited")).lower()
-            status_counts[status_key] = status_counts.get(status_key, 0) + 1
-
-        statuses = sorted(status_counts.keys())
-        filter_choice = st.selectbox(
-            "Filter by status",
-            ["all", *statuses],
-            format_func=lambda x: f"ALL ({len(contractor_links)})" if x == "all" else f"{x.upper()} ({status_counts.get(x, 0)})",
-            key="contractor-network-status-filter",
-        )
-
-        filtered_links = [
-            link for link in contractor_links
-            if filter_choice == "all" or str(link.get("status", "")).lower() == filter_choice
-        ]
-
-        for link in filtered_links:
-            status_value = str(link.get("status", "")).lower()
-            info = (
-                f"Phone: {link.get('phone', '') or 'N/A'} | "
-                f"Contractor ID: {link.get('contractor_id') or '-'}"
-            )
-            cc1, cc2 = st.columns([5, 1])
-            cc1.write(info)
-            cc1.markdown(_status_badge(str(link.get("status", "invited"))), unsafe_allow_html=True)
-            if status_value == "accepted":
-                if cc2.button("Approve", key=f"contractor-link-approve-{link['id']}"):
-                    approve_resp = api_post(f"{API_URL}/network/contractors/{link['id']}/approve")
-                    if approve_resp.ok:
-                        st.success("Contractor connection approved.")
-                        st.rerun()
-                    else:
-                        st.error(f"Approve failed: {approve_resp.status_code} {approve_resp.text}")
-            elif status_value == "invited":
-                cc2.caption("Waiting acceptance")
-            st.caption(
-                f"Invited: {link.get('invited_at') or '-'} | "
-                f"Accepted: {link.get('accepted_at') or '-'} | "
-                f"Approved: {link.get('approved_at') or '-'}"
-            )
-        if not filtered_links:
-            st.caption("No invitations match the selected status.")
-    else:
-        st.caption("No contractor network invitations yet.")
-
-    st.divider()
-
-    if contractors:
-        for c in contractors:
-            row_a, row_b = st.columns([5, 1])
-            details = (
-                f"**{c['name']}**"
-                + (f" | {c['specialty']}" if c.get("specialty") else "")
-                + (f" | {c['phone']}" if c.get("phone") else "")
-                + (f" | {c['email']}" if c.get("email") else "")
-                + (f"  \n_{c['notes']}_" if c.get("notes") else "")
-            )
-            row_a.write(details)
-            if row_b.button("Delete", key=f"contractor-del-{c['id']}"):
-                delete_resp = api_delete(f"{API_URL}/contractors/{c['id']}")
-                if delete_resp.status_code in (200, 204):
-                    st.success("Contractor deleted")
-                    st.rerun()
-                else:
-                    st.error(f"Delete failed: {delete_resp.status_code} {delete_resp.text}")
-    else:
-        st.caption("No contractors yet.")
-
-    st.markdown("**Add Contractor**")
-    add_c1, add_c2, add_c3 = st.columns([2, 1, 1])
-    new_name = add_c1.text_input("Name", key="contractor-new-name")
-    new_phone = add_c2.text_input("Phone", key="contractor-new-phone")
-    new_email = add_c3.text_input("Email", key="contractor-new-email")
-    add_c4, add_c5 = st.columns([1, 2])
-    new_specialty = add_c4.text_input("Specialty", key="contractor-new-specialty")
-    new_notes = add_c5.text_input("Notes", key="contractor-new-notes")
-
-    if st.button("Add Contractor", key="contractor-add-btn"):
-        if not new_name.strip():
-            st.warning("Name is required")
+    with d2:
+        st.markdown("**All Contractors**")
+        if contractors:
+            for contractor in contractors:
+                st.write(
+                    f"#{contractor['id']} | {contractor.get('name') or '-'} | "
+                    f"{contractor.get('phone') or 'N/A'}"
+                )
         else:
-            payload = {
-                "name": new_name.strip(),
-                "phone": new_phone.strip(),
-                "email": new_email.strip(),
-                "specialty": new_specialty.strip(),
-                "notes": new_notes.strip(),
-            }
-            create_resp = api_post(f"{API_URL}/contractors/", json=payload)
-            if create_resp.status_code in (200, 201):
-                st.success("Contractor added")
-                st.rerun()
-            else:
-                st.error(f"Failed: {create_resp.status_code} {create_resp.text}")
+            st.caption("No contractors found.")
 
 
 pending_requests = [r for r in requests_data if r.get("status") == "pending"]
-st.subheader(f"Pending Approval ({len(pending_requests)})")
-if not pending_requests:
-    st.caption("No pending requests.")
+if pending_requests:
+    st.subheader(f"Pending Approval ({len(pending_requests)})")
 
 for req in pending_requests:
     unit = unit_by_id.get(req["unit_id"])

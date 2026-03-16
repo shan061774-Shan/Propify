@@ -69,21 +69,43 @@ def build_reminder_message(tenant: Tenant | dict, total_due: float, late_fee: fl
     return message
 
 
-def get_twilio_client() -> tuple[Client, str]:
+def get_twilio_client() -> tuple[Client, str | None, str | None]:
     load_dotenv()
 
     account_sid = os.getenv("TWILIO_ACCOUNT_SID")
     auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    from_number = os.getenv("TWILIO_FROM_NUMBER")
+    from_number = os.getenv("TWILIO_FROM_NUMBER") or os.getenv("TWILIO_FROM_PHONE")
+    messaging_service_sid = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
 
-    if not account_sid or not auth_token or not from_number:
-        raise RuntimeError("Twilio environment variables are not configured")
+    if not account_sid or not auth_token:
+        raise RuntimeError("Twilio credentials are not configured")
+    if not from_number and not messaging_service_sid:
+        raise RuntimeError("Set TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID")
 
-    return Client(account_sid, auth_token), from_number
+    return Client(account_sid, auth_token), from_number, messaging_service_sid
+
+
+def send_sms_message(
+    client: Client,
+    to_phone: str,
+    message: str,
+    *,
+    from_number: str | None = None,
+    messaging_service_sid: str | None = None,
+) -> None:
+    payload = {"body": message, "to": to_phone}
+    if messaging_service_sid:
+        payload["messaging_service_sid"] = messaging_service_sid
+    elif from_number:
+        payload["from_"] = from_number
+    else:
+        raise RuntimeError("Twilio sender is not configured")
+
+    client.messages.create(**payload)
 
 
 def send_reminder_to_tenant(tenant_id: int) -> str:
-    client, from_number = get_twilio_client()
+    client, from_number, messaging_service_sid = get_twilio_client()
     db = SessionLocal()
 
     try:
@@ -99,14 +121,20 @@ def send_reminder_to_tenant(tenant_id: int) -> str:
             return f"No reminder sent. {tenant.name} has no balance due today."
 
         message = build_reminder_message(tenant, total_due, late_fee)
-        client.messages.create(body=message, from_=from_number, to=tenant.phone)
+        send_sms_message(
+            client,
+            tenant.phone,
+            message,
+            from_number=from_number,
+            messaging_service_sid=messaging_service_sid,
+        )
         return f"Reminder sent to {tenant.name} at {tenant.phone}."
     finally:
         db.close()
 
 
 def main() -> None:
-    client, from_number = get_twilio_client()
+    client, from_number, messaging_service_sid = get_twilio_client()
     db = SessionLocal()
 
     try:
@@ -122,10 +150,12 @@ def main() -> None:
 
             message = build_reminder_message(tenant, total_due, late_fee)
 
-            client.messages.create(
-                body=message,
-                from_=from_number,
-                to=tenant.phone,
+            send_sms_message(
+                client,
+                tenant.phone,
+                message,
+                from_number=from_number,
+                messaging_service_sid=messaging_service_sid,
             )
     finally:
         db.close()

@@ -11,6 +11,8 @@ def _clear_owner_auth_state() -> None:
         "owner_access_token",
         "force_owner_login",
         "owner_session_refreshed",
+        "owner_actor_name",
+        "owner_actor_type",
         "propify_admin_key",
         "tenant_portal_token",
         "tenant_portal_profile",
@@ -26,6 +28,8 @@ def _clear_owner_auth_state() -> None:
     st.session_state["owner_authenticated"] = False
     st.session_state["owner_access_token"] = None
     st.session_state["owner_profile"] = None
+    st.session_state["owner_actor_name"] = None
+    st.session_state["owner_actor_type"] = None
 
 
 def require_owner_login() -> None:

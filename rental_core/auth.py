@@ -25,7 +25,41 @@ def _create_access_token(payload: dict) -> str:
 
 
 def create_owner_access_token(owner: OwnerAccount) -> str:
-    return _create_access_token({"sub": str(owner.id), "sub_type": "owner", "role": "owner", "username": owner.username})
+    return _create_access_token(
+        {
+            "sub": str(owner.id),
+            "sub_type": "owner",
+            "role": "owner",
+            "username": owner.username,
+            "owner_account_id": owner.id,
+            "actor_name": owner.owner_name,
+        }
+    )
+
+
+def create_owner_admin_access_token(owner: OwnerAccount, admin_id: int, actor_name: str) -> str:
+    return _create_access_token(
+        {
+            "sub": str(admin_id),
+            "sub_type": "owner_admin",
+            "role": "owner",
+            "username": owner.username,
+            "owner_account_id": owner.id,
+            "actor_name": actor_name,
+        }
+    )
+
+
+def create_propify_admin_access_token(username: str) -> str:
+    return _create_access_token(
+        {
+            "sub": username,
+            "sub_type": "propify_admin",
+            "role": "propify_admin",
+            "username": username,
+            "actor_name": username,
+        }
+    )
 
 
 def create_tenant_access_token(tenant: Tenant) -> str:
@@ -65,10 +99,10 @@ def get_current_owner(
     db: Session = Depends(get_db),
 ) -> OwnerAccount:
     payload = _decode_token(credentials)
-    if payload.get("sub_type") != "owner":
+    if payload.get("sub_type") not in {"owner", "owner_admin"}:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
 
-    owner_id = payload.get("sub")
+    owner_id = payload.get("owner_account_id") or payload.get("sub")
     if not owner_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
 
@@ -112,3 +146,19 @@ def get_current_contractor(
     if not contractor:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token user no longer exists")
     return contractor
+
+
+def get_current_propify_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict:
+    payload = _decode_token(credentials)
+    if payload.get("sub_type") != "propify_admin":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+
+    expected_username = os.getenv("PROPIFY_MASTER_ADMIN_USER", "").strip()
+    token_username = str(payload.get("username") or "").strip()
+    if not token_username:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+    if expected_username and token_username != expected_username:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin identity")
+    return payload

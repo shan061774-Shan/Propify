@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from rental_core.models.owner_admin import OwnerAdmin
 from rental_core.models.owner import OwnerAccount
 from rental_core.models.owner_password_reset import OwnerPasswordReset
 from rental_core.schemas.owner import OwnerSetup, OwnerUpdate
@@ -98,13 +99,39 @@ def get_owner_by_phone(db: Session, phone: str):
     return owner
 
 
+def get_owner_admin_by_phone(db: Session, phone: str):
+    candidates = _owner_phone_candidates(phone)
+    return db.query(OwnerAdmin).filter(OwnerAdmin.phone.in_(candidates)).first()
+
+
 def login_owner(db: Session, phone: str, password: str):
     owner = get_owner_by_phone(db, phone)
+    if owner and _verify_password(password, owner.password_hash, owner.password_salt):
+        return {
+            "owner": owner,
+            "actor_type": "owner",
+            "actor_id": owner.id,
+            "actor_name": owner.owner_name,
+        }
+
+    admin = get_owner_admin_by_phone(db, phone)
+    if not admin or admin.status != "approved":
+        return None
+    if not admin.password_hash or not admin.password_salt:
+        return None
+    if not _verify_password(password, admin.password_hash, admin.password_salt):
+        return None
+
+    owner = get_owner_by_id(db, admin.owner_id)
     if not owner:
         return None
-    if not _verify_password(password, owner.password_hash, owner.password_salt):
-        return None
-    return owner
+
+    return {
+        "owner": owner,
+        "actor_type": "owner_admin",
+        "actor_id": admin.id,
+        "actor_name": admin.name or owner.owner_name,
+    }
 
 
 def update_owner(db: Session, owner_in: OwnerUpdate, owner_id: int):
@@ -266,3 +293,86 @@ def register_owner_phone(db: Session, phone: str, password: str) -> bool:
     owner.owner_phone = normalize_owner_phone(phone)
     db.commit()
     return True
+
+
+def list_owner_admins(db: Session, owner_id: int):
+    return (
+        db.query(OwnerAdmin)
+        .filter(OwnerAdmin.owner_id == owner_id)
+        .order_by(OwnerAdmin.invited_at.desc(), OwnerAdmin.id.desc())
+        .all()
+    )
+
+
+def invite_owner_admin(db: Session, owner_id: int, phone: str):
+    normalized_phone = normalize_owner_phone(phone)
+    owner = get_owner_by_id(db, owner_id)
+    if not owner:
+        return None
+    if owner.owner_phone in _owner_phone_candidates(normalized_phone):
+        raise ValueError("Primary owner phone is already registered for this company")
+
+    existing = (
+        db.query(OwnerAdmin)
+        .filter(OwnerAdmin.owner_id == owner_id, OwnerAdmin.phone == normalized_phone)
+        .first()
+    )
+    now = datetime.utcnow()
+    if existing:
+        existing.status = "invited"
+        existing.invited_at = now
+        existing.accepted_at = None
+        existing.approved_at = None
+        existing.password_hash = ""
+        existing.password_salt = ""
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    admin = OwnerAdmin(owner_id=owner_id, phone=normalized_phone, status="invited", invited_at=now)
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+    return admin
+
+
+def lookup_owner_admin_invites(db: Session, phone: str):
+    normalized_phone = normalize_owner_phone(phone)
+    candidates = _owner_phone_candidates(normalized_phone)
+    return (
+        db.query(OwnerAdmin)
+        .filter(OwnerAdmin.phone.in_(candidates))
+        .order_by(OwnerAdmin.invited_at.desc(), OwnerAdmin.id.desc())
+        .all()
+    )
+
+
+def accept_owner_admin_invite(
+    db: Session,
+    invite_id: int,
+    phone: str,
+    name: str,
+    email: str | None,
+    password: str,
+):
+    normalized_phone = normalize_owner_phone(phone)
+    if len(password or "") < 8:
+        raise ValueError("Password must be at least 8 characters")
+
+    invite = db.query(OwnerAdmin).filter(OwnerAdmin.id == invite_id, OwnerAdmin.phone == normalized_phone).first()
+    if not invite or invite.status not in {"invited", "accepted", "approved"}:
+        return None
+
+    password_hash, password_salt = _hash_password(password)
+    now = datetime.utcnow()
+    invite.name = (name or "").strip()
+    invite.email = (email or "").strip()
+    invite.password_hash = password_hash
+    invite.password_salt = password_salt
+    invite.status = "approved"
+    if not invite.accepted_at:
+        invite.accepted_at = now
+    invite.approved_at = now
+    db.commit()
+    db.refresh(invite)
+    return invite
